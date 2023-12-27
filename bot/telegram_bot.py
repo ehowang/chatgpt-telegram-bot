@@ -236,58 +236,14 @@ class ChatGPTTelegramBot:
             text=localized_text('reset_done', self.config['bot_language'])
         )
 
-    async def tts(self, update: Update, context:
-                   ContextTypes.DEFAULT_TYPE):
-        """
-        Generates an speech for the given input using TTS APIs
-        """
-        if not self.config['enable_tts_generation'] \
-                or not await self.check_allowed_and_within_budget(update, context):
-            return
 
-        tts_query = message_text(update.message)
-        if tts_query == '':
-            await update.effective_message.reply_text(
-                message_thread_id=get_thread_id(update),
-                text=localized_text('tts_no_prompt', self.config['bot_language'])
-            )
-            return
-
-        logging.info(f'New speech generation request received from user {update.message.from_user.name} '
-                     f'(id: {update.message.from_user.id})')
-
-        async def _generate():
-            try:
-                speech_file, text_length = await self.openai.generate_speech(text=tts_query)
-
-                await update.effective_message.reply_voice(
-                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                    voice=speech_file
-                )
-                speech_file.close()
-                # add image request to users usage tracker
-                user_id = update.message.from_user.id
-                self.usage[user_id].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
-                # add guest chat request to guest usage tracker
-                if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
-                    self.usage["guests"].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
-
-            except Exception as e:
-                logging.exception(e)
-                await update.effective_message.reply_text(
-                    message_thread_id=get_thread_id(update),
-                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                    text=f"{localized_text('tts_fail', self.config['bot_language'])}: {str(e)}",
-                    parse_mode=constants.ParseMode.MARKDOWN
-                )
-
-        await wrap_with_indicator(update, context, _generate, constants.ChatAction.UPLOAD_VOICE)
 
     async def transcribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Transcribe audio messages.
         """
-        if not await self.check_allowed_and_within_budget(update, context):
+        #FIXME:
+        if not  await self.check_allowed_and_within_budget(update, context):
             return
         if update.edited_message or not update.message or update.message.via_bot:
             return
@@ -379,39 +335,68 @@ class ChatGPTTelegramBot:
 
         try:
             total_tokens = 0
-            async def _reply():
-                nonlocal total_tokens,chunks
-                response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=self.last_message[chat_id])
+            response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=self.last_message[chat_id])
+            if not self.config["enable_tts_generation"]:
+                async def _reply():
+                    if is_direct_result(response):
+                        return await handle_direct_result(self.config, update, response)
 
-                if is_direct_result(response):
-                    return await handle_direct_result(self.config, update, response)
+                    # Split into chunks of 4096 characters (Telegram's message limit)
+                    chunks = split_into_chunks(response)
 
-                # Split into chunks of 4096 characters (Telegram's message limit)
-                chunks = split_into_chunks(response)
-
-                for index, chunk in enumerate(chunks):
-                    try:
-                        await update.effective_message.reply_text(
-                            message_thread_id=get_thread_id(update),
-                            reply_to_message_id=get_reply_to_message_id(self.config,
-                                                                        update) if index == 0 else None,
-                            text=chunk,
-                            parse_mode=constants.ParseMode.MARKDOWN
-                        )
-                    except Exception:
+                    for index, chunk in enumerate(chunks):
                         try:
                             await update.effective_message.reply_text(
                                 message_thread_id=get_thread_id(update),
                                 reply_to_message_id=get_reply_to_message_id(self.config,
                                                                             update) if index == 0 else None,
-                                text=chunk
+                                text=chunk,
+                                parse_mode=constants.ParseMode.MARKDOWN
                             )
-                        except Exception as exception:
-                            raise exception
+                        except Exception:
+                            try:
+                                await update.effective_message.reply_text(
+                                    message_thread_id=get_thread_id(update),
+                                    reply_to_message_id=get_reply_to_message_id(self.config,
+                                                                                update) if index == 0 else None,
+                                    text=chunk
+                                )
+                            except Exception as exception:
+                                raise exception
 
-            await wrap_with_indicator(update, context, _reply, constants.ChatAction.TYPING)
+                await wrap_with_indicator(update, context, _reply, constants.ChatAction.TYPING)
 
-            add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
+                add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
+            else:
+                logging.info(f'New speech generation request received from user {update.message.from_user.name} '
+                    f'(id: {update.message.from_user.id})')
+
+                async def _generate():
+                    try:
+                        speech_file, text_length = await self.openai.generate_speech(text=response)
+
+                        await update.effective_message.reply_voice(
+                            reply_to_message_id=get_reply_to_message_id(self.config, update),
+                            voice=speech_file
+                        )
+                        speech_file.close()
+                        # add image request to users usage tracker
+                        user_id = update.message.from_user.id
+                        self.usage[user_id].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
+                        # add guest chat request to guest usage tracker
+                        if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
+                            self.usage["guests"].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
+
+                    except Exception as e:
+                        logging.exception(e)
+                        await update.effective_message.reply_text(
+                            message_thread_id=get_thread_id(update),
+                            reply_to_message_id=get_reply_to_message_id(self.config, update),
+                            text=f"{localized_text('tts_fail', self.config['bot_language'])}: {str(e)}",
+                            parse_mode=constants.ParseMode.MARKDOWN
+                        )
+
+                await wrap_with_indicator(update, context, _generate, constants.ChatAction.UPLOAD_VOICE)
 
         except Exception as e:
             logging.exception(e)
@@ -481,53 +466,69 @@ class ChatGPTTelegramBot:
         await application.bot.set_my_commands(self.group_commands, scope=BotCommandScopeAllGroupChats())
         await application.bot.set_my_commands(self.commands)
 
-    async def chatmode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        '''
-        Toggles chat mode
-        '''
-        keyboard=[
-                        [InlineKeyboardButton("Text", callback_data="1"),
-                       InlineKeyboardButton("Voice", callback_data="2"),
-                       ],
-                        [InlineKeyboardButton("Back", callback_data="3")]
-                ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Select mode", reply_markup=reply_markup)
-    async def mode_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
+    # async def chatmode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     '''
+    #     Toggles chat mode
+    #     '''
+    #     keyboard=[
+    #                     [InlineKeyboardButton("Text", callback_data="1"),
+    #                    InlineKeyboardButton("Voice", callback_data="2"),
+    #                    ],
+    #                     [InlineKeyboardButton("Back", callback_data="3")]
+    #             ]
+    #     reply_markup = InlineKeyboardMarkup(keyboard)
+    #     await update.message.reply_text("Select mode", reply_markup=reply_markup)
+    # async def mode_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    #     query=update.callback_query
 
-        await query.answer()
-        #TODO: implement voice and text mode switch
-        if query.data=="1":
-            self.config["enable_tts_generation"]=False
-            await query.edit_message_text(text=f"Selected mode:Text")
-            # return ConversationHandler.END
-        elif query.data=="2":
-            self.config["enable_tts_generation"]=True
-            await query.edit_message_text(text=f"Selected mode:Voice")
-            # return ConversationHandler.END
-        elif query.data=="3":
-            await query.edit_message_text(text=f"Selected mode:cancel")
-            # return ConversationHandler.END
-    async def end(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        return ConversationHandler.END
-    async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    #     await query.answer()
+    #     #TODO: implement voice and text mode switch
+    #     if query.data=="1":
+    #         self.config["enable_tts_generation"]=False
+    #         await query.edit_message_text(text=f"Selected mode:Text")
+    #         # return ConversationHandler.END
+    #     elif query.data=="2":
+    #         self.config["enable_tts_generation"]=True
+    #         await query.edit_message_text(text=f"Selected mode:Voice")
+    #         # return ConversationHandler.END
+    #     elif query.data=="3":
+    #         await query.edit_message_text(text=f"Selected mode:cancel")
+    #         # return ConversationHandler.END
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
+        await query.delete_message()
+        return ConversationHandler.END
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         keyboard=[
             [
                 InlineKeyboardButton("Text", callback_data=str(TEXT)),
                 InlineKeyboardButton("Voice", callback_data=str(VOICE)),
+                
+            ],
+            [
                 InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
-            ]
+            ],
         ]
+
         reply_markup=InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text="Select mode", reply_markup=reply_markup)
+        await update.message.reply_text("Select mode", reply_markup=reply_markup)
         return CHAT_MODES_ROUTES
-    async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+    async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
+        # self.config["enable_tts_generation"]=False
+        
+        await query.edit_message_text(text="Select mode:Text")
+        return ConversationHandler.END
+    async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        # self.config["enable_tts_generation"]=True
         await query.edit_message_text(text="Voice mode")
+        return ConversationHandler.END
+
         
     def run(self):
         """
@@ -548,17 +549,19 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
-        application.add_handler(CommandHandler("chatmode", self.chatmode))
+        # application.add_handler(CommandHandler("chatmode", self.chatmode))
         # application.add_handler(CallbackQueryHandler(self.mode_menu))
         conv_handler=ConversationHandler(
-            entry_points=CommandHandler("chatmode", self.chatmode),
+            entry_points=[CommandHandler("chatmode", self.start)],
             states={
                 CHAT_MODES_ROUTES:[
                     CallbackQueryHandler(self.text,pattern="^" + str(TEXT) + "$"),
                     CallbackQueryHandler(self.voice,pattern="^" + str(VOICE) + "$"),
-                    CallbackQueryHandler(self.end, pattern="^" + str(CANCEL) + "$")
-                ]
-            }
+                    CallbackQueryHandler(self.cancel, pattern="^" + str(CANCEL) + "$")
+                ],
+            },
+            fallbacks=[CommandHandler("chatmode", self.start)],
+            per_message=True
         )
         application.add_handler(conv_handler)
         # application.add_handler(CommandHandler(
