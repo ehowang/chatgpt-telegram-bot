@@ -62,6 +62,7 @@ class ChatGPTTelegramBot:
         self.usage = {}
         self.last_message = {}
         self.inline_queries_cache = {}
+        self.voice_enable=False
 
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -242,7 +243,6 @@ class ChatGPTTelegramBot:
         """
         Transcribe audio messages.
         """
-        #FIXME:
         if not  await self.check_allowed_and_within_budget(update, context):
             return
         if update.edited_message or not update.message or update.message.via_bot:
@@ -409,55 +409,46 @@ class ChatGPTTelegramBot:
 
     
 
-    async def check_allowed_and_within_budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                              is_inline=False) -> bool:
+    async def check_allowed_and_within_budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """
         Checks if the user is allowed to use the bot and if they are within their budget
         :param update: Telegram update object
         :param context: Telegram context object
-        :param is_inline: Boolean flag for inline queries
         :return: Boolean indicating if the user is allowed to use the bot
         """
-        name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
-        user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
+        name = update.message.from_user.name
+        user_id = update.message.from_user.id
 
-        if not await is_allowed(self.config, update, context, is_inline=is_inline):
+        if not await is_allowed(self.config, update, context):
             logging.warning(f'User {name} (id: {user_id}) is not allowed to use the bot')
-            await self.send_disallowed_message(update, context, is_inline)
+            await self.send_disallowed_message(update, context)
             return False
-        if not is_within_budget(self.config, self.usage, update, is_inline=is_inline):
-            logging.warning(f'User {name} (id: {user_id}) reached their usage limit')
-            await self.send_budget_reached_message(update, context, is_inline)
+        if not is_within_budget(self.config, self.usage, update):
+            await self.send_budget_reached_message(update, context)
             return False
 
         return True
 
-    async def send_disallowed_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE, is_inline=False):
+    async def send_disallowed_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         """
         Sends the disallowed message to the user.
         """
-        if not is_inline:
-            await update.effective_message.reply_text(
-                message_thread_id=get_thread_id(update),
-                text=self.disallowed_message,
-                disable_web_page_preview=True
-            )
-        else:
-            result_id = str(uuid4())
-            await self.send_inline_query_result(update, result_id, message_content=self.disallowed_message)
-
-    async def send_budget_reached_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE, is_inline=False):
+        await update.effective_message.reply_text(
+            message_thread_id=get_thread_id(update),
+            text=self.disallowed_message,
+            disable_web_page_preview=True
+        )
+        
+    async def send_budget_reached_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         """
         Sends the budget reached message to the user.
         """
-        if not is_inline:
-            await update.effective_message.reply_text(
-                message_thread_id=get_thread_id(update),
-                text=self.budget_limit_message
-            )
-        else:
-            result_id = str(uuid4())
-            await self.send_inline_query_result(update, result_id, message_content=self.budget_limit_message)
+        
+        await update.effective_message.reply_text(
+            message_thread_id=get_thread_id(update),
+            text=self.budget_limit_message
+        )
+       
 
     async def post_init(self, application: Application) -> None:
         """
@@ -466,34 +457,7 @@ class ChatGPTTelegramBot:
         await application.bot.set_my_commands(self.group_commands, scope=BotCommandScopeAllGroupChats())
         await application.bot.set_my_commands(self.commands)
 
-    # async def chatmode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     '''
-    #     Toggles chat mode
-    #     '''
-    #     keyboard=[
-    #                     [InlineKeyboardButton("Text", callback_data="1"),
-    #                    InlineKeyboardButton("Voice", callback_data="2"),
-    #                    ],
-    #                     [InlineKeyboardButton("Back", callback_data="3")]
-    #             ]
-    #     reply_markup = InlineKeyboardMarkup(keyboard)
-    #     await update.message.reply_text("Select mode", reply_markup=reply_markup)
-    # async def mode_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    #     query=update.callback_query
-
-    #     await query.answer()
-    #     #TODO: implement voice and text mode switch
-    #     if query.data=="1":
-    #         self.config["enable_tts_generation"]=False
-    #         await query.edit_message_text(text=f"Selected mode:Text")
-    #         # return ConversationHandler.END
-    #     elif query.data=="2":
-    #         self.config["enable_tts_generation"]=True
-    #         await query.edit_message_text(text=f"Selected mode:Voice")
-    #         # return ConversationHandler.END
-    #     elif query.data=="3":
-    #         await query.edit_message_text(text=f"Selected mode:cancel")
-    #         # return ConversationHandler.END
+   
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
@@ -518,14 +482,14 @@ class ChatGPTTelegramBot:
     async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
-        # self.config["enable_tts_generation"]=False
+        self.config["enable_tts_generation"]=False
         
         await query.edit_message_text(text="Select mode:Text")
         return ConversationHandler.END
     async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
-        # self.config["enable_tts_generation"]=True
+        self.config["enable_tts_generation"]=True
         await query.edit_message_text(text="Voice mode")
         return ConversationHandler.END
 
@@ -561,7 +525,8 @@ class ChatGPTTelegramBot:
                 ],
             },
             fallbacks=[CommandHandler("chatmode", self.start)],
-            per_message=True
+            per_message=False
+
         )
         application.add_handler(conv_handler)
         # application.add_handler(CommandHandler(
@@ -574,8 +539,8 @@ class ChatGPTTelegramBot:
         #     filters.AUDIO | filters.VOICE | filters.Document.AUDIO |
         #     filters.VIDEO | filters.VIDEO_NOTE | filters.Document.VIDEO,
         #     self.transcribe))
-        #TODO:搞懂这个东西
-        application.add_handler(MessageHandler(filters.TEXT |filters.VOICE & (~filters.COMMAND), self.transcribe))
+        application.add_handler(MessageHandler((filters.TEXT|filters.VOICE)  & (~filters.COMMAND), self.transcribe))
+        # application.add_handler(MessageHandler(filters.VOICE & (~filters.COMMAND), self.transcribe))
         
 
         application.add_error_handler(error_handler)

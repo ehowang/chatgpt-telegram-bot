@@ -86,16 +86,16 @@ def split_into_chunks(text: str, chunk_size: int = 4096) -> list[str]:
 
 
 async def wrap_with_indicator(update: Update, context: CallbackContext, coroutine,
-                              chat_action: constants.ChatAction = "", is_inline=False):
+                              chat_action: constants.ChatAction = ""):
     """
     Wraps a coroutine while repeatedly sending a chat action to the user.
     """
     task = context.application.create_task(coroutine(), update=update)
     while not task.done():
-        if not is_inline:
-            context.application.create_task(
-                update.effective_chat.send_action(chat_action, message_thread_id=get_thread_id(update))
-            )
+        
+        context.application.create_task(
+            update.effective_chat.send_action(chat_action, message_thread_id=get_thread_id(update))
+        )
         try:
             await asyncio.wait_for(asyncio.shield(task), 4.5)
         except asyncio.TimeoutError:
@@ -103,7 +103,7 @@ async def wrap_with_indicator(update: Update, context: CallbackContext, coroutin
 
 
 async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: int | None,
-                                  message_id: str, text: str, markdown: bool = True, is_inline: bool = False):
+                                  message_id: str, text: str, markdown: bool = True):
     """
     Edit a message with retry logic in case of failure (e.g. broken markdown)
     :param context: The context to use
@@ -111,14 +111,13 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     :param message_id: The message id to edit
     :param text: The text to edit the message with
     :param markdown: Whether to use markdown parse mode
-    :param is_inline: Whether the message to edit is an inline message
     :return: None
     """
     try:
         await context.bot.edit_message_text(
             chat_id=chat_id,
-            message_id=int(message_id) if not is_inline else None,
-            inline_message_id=message_id if is_inline else None,
+            message_id=int(message_id),
+            inline_message_id= None,
             text=text,
             parse_mode=constants.ParseMode.MARKDOWN if markdown else None,
         )
@@ -128,8 +127,8 @@ async def edit_message_with_retry(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
-                message_id=int(message_id) if not is_inline else None,
-                inline_message_id=message_id if is_inline else None,
+                message_id=int(message_id),
+                inline_message_id= None,
                 text=text,
             )
         except Exception as e:
@@ -148,23 +147,23 @@ async def error_handler(_: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.error(f'Exception while handling an update: {context.error}')
 
 
-async def is_allowed(config, update: Update, context: CallbackContext, is_inline=False) -> bool:
+async def is_allowed(config, update: Update, context: CallbackContext) -> bool:
     """
     Checks if the user is allowed to use the bot.
     """
     if config['allowed_user_ids'] == '*':
         return True
 
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
+    user_id =  update.message.from_user.id
     if is_admin(config, user_id):
         return True
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    name =  update.message.from_user.name
     allowed_user_ids = config['allowed_user_ids'].split(',')
     # Check if user is allowed
     if str(user_id) in allowed_user_ids:
         return True
     # Check if it's a group a chat with at least one authorized member
-    if not is_inline and is_group_chat(update):
+    if is_group_chat(update):
         admin_user_ids = config['admin_user_ids'].split(',')
         for user in itertools.chain(allowed_user_ids, admin_user_ids):
             if not user.strip():
@@ -226,13 +225,12 @@ def get_user_budget(config, user_id) -> float | None:
     return None
 
 
-def get_remaining_budget(config, usage, update: Update, is_inline=False) -> float:
+def get_remaining_budget(config, usage, update: Update) -> float:
     """
     Calculate the remaining budget for a user based on their current usage.
     :param config: The bot configuration object
     :param usage: The usage tracker object
     :param update: Telegram update object
-    :param is_inline: Boolean flag for inline queries
     :return: The remaining budget for the user as a float
     """
     # Mapping of budget period to cost period
@@ -242,8 +240,8 @@ def get_remaining_budget(config, usage, update: Update, is_inline=False) -> floa
         "all-time": "cost_all_time"
     }
 
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    user_id = update.message.from_user.id
+    name =  update.message.from_user.name
     if user_id not in usage:
         usage[user_id] = UsageTracker(user_id, name)
 
@@ -261,21 +259,20 @@ def get_remaining_budget(config, usage, update: Update, is_inline=False) -> floa
     return config['guest_budget'] - cost
 
 
-def is_within_budget(config, usage, update: Update, is_inline=False) -> bool:
+def is_within_budget(config, usage, update: Update) -> bool:
     """
     Checks if the user reached their usage limit.
     Initializes UsageTracker for user and guest when needed.
     :param config: The bot configuration object
     :param usage: The usage tracker object
     :param update: Telegram update object
-    :param is_inline: Boolean flag for inline queries
     :return: Boolean indicating if the user has a positive budget
     """
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    user_id = update.message.from_user.id
+    name =  update.message.from_user.name
     if user_id not in usage:
         usage[user_id] = UsageTracker(user_id, name)
-    remaining_budget = get_remaining_budget(config, usage, update, is_inline=is_inline)
+    remaining_budget = get_remaining_budget(config, usage, update)
     return remaining_budget > 0
 
 
