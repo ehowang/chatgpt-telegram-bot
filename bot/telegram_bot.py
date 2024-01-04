@@ -23,9 +23,11 @@ from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicato
 from openai_helper import OpenAIHelper, localized_text
 from usage_tracker import UsageTracker
 
-TEXT,VOICE,CANCEL=range(3)
-CHAT_MODES_ROUTES=range(1)
-
+TEXT,VOICE_OFF,CANCEL=range(3)
+TEXT,VOICE_ON,CANCEL,VOICE_SELECT=range(4)
+VOICE_OFF_ROUTES,VOICE_ON_ROUTES,VOICE_SELECT_ROUTES=range(3)
+VOICE_ALLOY,VOICE_ECHO,VOICE_FABLE,VOICE_ONYX,VOICE_NOVA,VOICE_SHIMMER=range(6)
+hello_prompt="I'm happy to meet you, and that I'm excited to have the chance to get to know you better!"
 class ChatGPTTelegramBot:
     """
     Class representing a ChatGPT Telegram Bot.
@@ -47,22 +49,14 @@ class ChatGPTTelegramBot:
             BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
             BotCommand(command='chatmode', description=localized_text('chatmode_description', bot_language))
         ]
-        # If imaging is enabled, add the "image" command to the list
-        if self.config.get('enable_image_generation', False):
-            self.commands.append(BotCommand(command='image', description=localized_text('image_description', bot_language)))
-
-        if self.config.get('enable_tts_generation', False):
-            self.commands.append(BotCommand(command='tts', description=localized_text('tts_description', bot_language)))
-
-        self.group_commands = [BotCommand(
-            command='chat', description=localized_text('chat_description', bot_language)
-        )] + self.commands
+        
         self.disallowed_message = localized_text('disallowed', bot_language)
         self.budget_limit_message = localized_text('budget_limit', bot_language)
         self.usage = {}
         self.last_message = {}
         self.inline_queries_cache = {}
         self.voice_enable=False
+        self.tts_voice=self.config['tts_voice']
 
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -237,6 +231,112 @@ class ChatGPTTelegramBot:
             text=localized_text('reset_done', self.config['bot_language'])
         )
 
+    async def stt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logging.info(
+            f'New voice message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
+        filename = update.message.effective_attachment.file_unique_id
+        filename_mp3 = f'{filename}.mp3'
+        bot_language = self.config['bot_language']
+        try:
+            media_file = await context.bot.get_file(update.message.effective_attachment.file_id)
+            await media_file.download_to_drive(filename)
+        except Exception as e:
+            logging.exception(e)
+            await update.effective_message.reply_text(
+                message_thread_id=get_thread_id(update),
+                reply_to_message_id=get_reply_to_message_id(self.config, update),
+                text=(
+                    f"{localized_text('media_download_fail', bot_language)[0]}: "
+                    f"{str(e)}. {localized_text('media_download_fail', bot_language)[1]}"
+                ),
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return
+
+        try:
+            audio_track = AudioSegment.from_file(filename)
+            audio_track.export(filename_mp3, format="mp3")
+            logging.info(f'New transcribe request received from user {update.message.from_user.name} '
+                            f'(id: {update.message.from_user.id})')
+
+        except Exception as e:
+            logging.exception(e)
+            await update.effective_message.reply_text(
+                message_thread_id=get_thread_id(update),
+                reply_to_message_id=get_reply_to_message_id(self.config, update),
+                text=localized_text('media_type_fail', bot_language)
+            )
+            if os.path.exists(filename):
+                os.remove(filename)
+            return
+
+        user_id = update.message.from_user.id
+        if user_id not in self.usage:
+            self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
+
+        try:
+            transcript = await self.openai.transcribe(filename_mp3)
+
+            transcription_price = self.config['transcription_price']
+            self.usage[user_id].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
+
+            allowed_user_ids = self.config['allowed_user_ids'].split(',')
+            if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
+                self.usage["guests"].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
+
+            # check if transcript starts with any of the prefixes
+            response_to_transcription = any(transcript.lower().startswith(prefix.lower()) if prefix else False
+                                            for prefix in self.config['voice_reply_prompts'])
+
+            if  not response_to_transcription:
+
+                self.last_message[update.effective_chat.id] = transcript
+        
+
+        except Exception as e:
+            logging.exception(e)
+            await update.effective_message.reply_text(
+                message_thread_id=get_thread_id(update),
+                reply_to_message_id=get_reply_to_message_id(self.config, update),
+                text=f"{localized_text('transcribe_fail', bot_language)}: {str(e)}",
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+        finally:
+            if os.path.exists(filename_mp3):
+                os.remove(filename_mp3)
+            if os.path.exists(filename):
+                os.remove(filename)
+    async def tts(self,update:Update,context:ContextTypes.DEFAULT_TYPE,response:str):
+        logging.info(f'New speech generation request received from user {update.message.from_user.name} '
+                    f'(id: {update.message.from_user.id})')
+
+        async def _generate():
+            try:
+                speech_file, text_length = await self.openai.generate_speech(text=response,tts_voice=self.tts_voice)
+
+                await update.effective_message.reply_voice(
+                    reply_to_message_id=get_reply_to_message_id(self.config, update),
+                    voice=speech_file
+                )
+                speech_file.close()
+                # add image request to users usage tracker
+                user_id = update.message.from_user.id
+                self.usage[user_id].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
+                # add guest chat request to guest usage tracker
+                if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
+                    self.usage["guests"].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
+
+            except Exception as e:
+                logging.exception(e)
+                await update.effective_message.reply_text(
+                    message_thread_id=get_thread_id(update),
+                    reply_to_message_id=get_reply_to_message_id(self.config, update),
+                    text=f"{localized_text('tts_fail', self.config['bot_language'])}: {str(e)}",
+                    parse_mode=constants.ParseMode.MARKDOWN
+                )
+
+        await wrap_with_indicator(update, context, _generate, constants.ChatAction.UPLOAD_VOICE)
+        
 
 
     async def transcribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,85 +348,14 @@ class ChatGPTTelegramBot:
         if update.edited_message or not update.message or update.message.via_bot:
             return
 
-        chunks=list()
         chat_id = update.effective_chat.id
         user_id = update.message.from_user.id
 
         if update.message.voice:
-            logging.info(
-            f'New voice message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
-            filename = update.message.effective_attachment.file_unique_id
-            filename_mp3 = f'{filename}.mp3'
-            bot_language = self.config['bot_language']
             try:
-                media_file = await context.bot.get_file(update.message.effective_attachment.file_id)
-                await media_file.download_to_drive(filename)
+                await self.stt(update, context)
             except Exception as e:
                 logging.exception(e)
-                await update.effective_message.reply_text(
-                    message_thread_id=get_thread_id(update),
-                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                    text=(
-                        f"{localized_text('media_download_fail', bot_language)[0]}: "
-                        f"{str(e)}. {localized_text('media_download_fail', bot_language)[1]}"
-                    ),
-                    parse_mode=constants.ParseMode.MARKDOWN
-                )
-                return
-
-            try:
-                audio_track = AudioSegment.from_file(filename)
-                audio_track.export(filename_mp3, format="mp3")
-                logging.info(f'New transcribe request received from user {update.message.from_user.name} '
-                                f'(id: {update.message.from_user.id})')
-
-            except Exception as e:
-                logging.exception(e)
-                await update.effective_message.reply_text(
-                    message_thread_id=get_thread_id(update),
-                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                    text=localized_text('media_type_fail', bot_language)
-                )
-                if os.path.exists(filename):
-                    os.remove(filename)
-                return
-
-            user_id = update.message.from_user.id
-            if user_id not in self.usage:
-                self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
-
-            try:
-                transcript = await self.openai.transcribe(filename_mp3)
-
-                transcription_price = self.config['transcription_price']
-                self.usage[user_id].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
-
-                allowed_user_ids = self.config['allowed_user_ids'].split(',')
-                if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                    self.usage["guests"].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
-
-                # check if transcript starts with any of the prefixes
-                response_to_transcription = any(transcript.lower().startswith(prefix.lower()) if prefix else False
-                                                for prefix in self.config['voice_reply_prompts'])
-
-                if  not response_to_transcription:
-
-                    self.last_message[chat_id] = transcript
-            
-
-            except Exception as e:
-                logging.exception(e)
-                await update.effective_message.reply_text(
-                    message_thread_id=get_thread_id(update),
-                    reply_to_message_id=get_reply_to_message_id(self.config, update),
-                    text=f"{localized_text('transcribe_fail', bot_language)}: {str(e)}",
-                    parse_mode=constants.ParseMode.MARKDOWN
-                )
-            finally:
-                if os.path.exists(filename_mp3):
-                    os.remove(filename_mp3)
-                if os.path.exists(filename):
-                    os.remove(filename)
         elif update.message.text:
             logging.info(
             f'New text message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
@@ -336,11 +365,10 @@ class ChatGPTTelegramBot:
         try:
             total_tokens = 0
             response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=self.last_message[chat_id])
+            if is_direct_result(response):
+                return await handle_direct_result(self.config, update, response)
             if not self.config["enable_tts_generation"]:
                 async def _reply():
-                    if is_direct_result(response):
-                        return await handle_direct_result(self.config, update, response)
-
                     # Split into chunks of 4096 characters (Telegram's message limit)
                     chunks = split_into_chunks(response)
 
@@ -368,35 +396,11 @@ class ChatGPTTelegramBot:
 
                 add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
             else:
-                logging.info(f'New speech generation request received from user {update.message.from_user.name} '
-                    f'(id: {update.message.from_user.id})')
-
-                async def _generate():
-                    try:
-                        speech_file, text_length = await self.openai.generate_speech(text=response)
-
-                        await update.effective_message.reply_voice(
-                            reply_to_message_id=get_reply_to_message_id(self.config, update),
-                            voice=speech_file
-                        )
-                        speech_file.close()
-                        # add image request to users usage tracker
-                        user_id = update.message.from_user.id
-                        self.usage[user_id].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
-                        # add guest chat request to guest usage tracker
-                        if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
-                            self.usage["guests"].add_tts_request(text_length, self.config['tts_model'], self.config['tts_prices'])
-
-                    except Exception as e:
-                        logging.exception(e)
-                        await update.effective_message.reply_text(
-                            message_thread_id=get_thread_id(update),
-                            reply_to_message_id=get_reply_to_message_id(self.config, update),
-                            text=f"{localized_text('tts_fail', self.config['bot_language'])}: {str(e)}",
-                            parse_mode=constants.ParseMode.MARKDOWN
-                        )
-
-                await wrap_with_indicator(update, context, _generate, constants.ChatAction.UPLOAD_VOICE)
+                try:
+                    await self.tts(update=update,context=context,response=response)
+                except Exception as e:
+                    logging.exception(e)
+                
 
         except Exception as e:
             logging.exception(e)
@@ -477,7 +481,7 @@ class ChatGPTTelegramBot:
 
         reply_markup=InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("Select mode", reply_markup=reply_markup)
-        return CHAT_MODES_ROUTES
+        return TEXT_MODES_ROUTES
 
     async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
@@ -487,12 +491,100 @@ class ChatGPTTelegramBot:
         await query.edit_message_text(text="Select mode:Text")
         return ConversationHandler.END
     async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        keyboard=[
+            [
+                InlineKeyboardButton("Text", callback_data=str(TEXT)),
+            ],
+            [
+                InlineKeyboardButton("Voice", callback_data=str(VOICE)),
+            ],
+            [
+                InlineKeyboardButton("Voice Select", callback_data=str(VOICE_SELECT)),
+            ],
+            [
+                InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
+            ]
+        ]
+        reply_markup=InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Select mode", reply_markup=reply_markup)
+        return VOICE_MODES_ROUTES
+    async def voice_select(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        keyboard=[
+            [
+                InlineKeyboardButton("Alloy", callback_data=str(VOICE_ALLOY)),
+                InlineKeyboardButton("Echo", callback_data=str(VOICE_ECHO)),
+            ],
+            [
+                InlineKeyboardButton("Fable",callback_data=str(VOICE_FABLE)),
+                InlineKeyboardButton("Onyx", callback_data=str(VOICE_ONYX)),
+            ],
+            [
+                InlineKeyboardButton("Nova", callback_data=str(VOICE_NOVA)),
+                InlineKeyboardButton("Shimmer", callback_data=str(VOICE_SHIMMER)),
+            ],
+            [
+                InlineKeyboardButton("Back", callback_data=str(BACK)),
+            ]
+        ]
+        reply_markup=InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Which voice do you want?", reply_markup=reply_markup)
+        return VOICE_SELECT_ROUTES
+    async def voice_alloy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query=update.callback_query
         await query.answer()
-        self.config["enable_tts_generation"]=True
-        await query.edit_message_text(text="Voice mode")
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Alloy")
         return ConversationHandler.END
-
+    async def voice_echo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Echo")
+        return ConversationHandler.END
+    async def voice_fable(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Fable")
+        return ConversationHandler.END
+    async def voice_nova(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Nova")
+        return ConversationHandler.END
+    async def voice_onyx(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Onyx")
+        return ConversationHandler.END
+    async def voice_shimmer(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        self.tts(update, context,response=hello_prompt)
+        await query.edit_message_text(text="Select Voice:Shimmer")
+        return ConversationHandler.END
+    async def back(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query=update.callback_query
+        await query.answer()
+        keyboard=[
+            [
+                InlineKeyboardButton("Text", callback_data=str(TEXT)),
+            ],
+            [
+                InlineKeyboardButton("Voice", callback_data=str(VOICE)),
+            ],
+            [
+                InlineKeyboardButton("Voice Select", callback_data=str(VOICE_SELECT)),
+            ],
+            [
+                InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
+            ]
+        ]
+        reply_markup=InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text="Select mode", reply_markup=reply_markup)
+        return VOICE_MODES_ROUTES
         
     def run(self):
         """
@@ -518,29 +610,36 @@ class ChatGPTTelegramBot:
         conv_handler=ConversationHandler(
             entry_points=[CommandHandler("chatmode", self.start)],
             states={
-                CHAT_MODES_ROUTES:[
+                VOICE_OFF_ROUTES:[
                     CallbackQueryHandler(self.text,pattern="^" + str(TEXT) + "$"),
-                    CallbackQueryHandler(self.voice,pattern="^" + str(VOICE) + "$"),
+                    CallbackQueryHandler(self.voice,pattern="^" + str(VOICE_OFF) + "$"),
                     CallbackQueryHandler(self.cancel, pattern="^" + str(CANCEL) + "$")
                 ],
+                VOICE_ON_ROUTES:[
+                    CallbackQueryHandler(self.text,pattern="^" + str(TEXT) + "$"),
+                    CallbackQueryHandler(self.voice,pattern="^" + str(VOICE_ON) + "$"),
+                    CallbackQueryHandler(self.cancel, pattern="^" + str(CANCEL) + "$"),
+                    CallbackQueryHandler(self.voice_select, pattern="^" + str(VOICE_SELECT) + "$"),
+                    
+                ],
+                VOICE_SELECT_ROUTES:[
+                    CallbackQueryHandler(self.voice_alloy, pattern="^" + str(VOICE_ALLOY) + "$"),
+                    CallbackQueryHandler(self.voice_echo, pattern="^" + str(VOICE_ECHO) + "$"),
+                    CallbackQueryHandler(self.voice_fable, pattern="^" + str(VOICE_FABLE) + "$"),
+                    CallbackQueryHandler(self.voice_onyx, pattern="^" + str(VOICE_ONYX) + "$"),
+                    CallbackQueryHandler(self.voice_nova, pattern="^" + str(VOICE_NOVA) + "$"),
+                    CallbackQueryHandler(self.voice_shimmer, pattern="^" + str(VOICE_SHIMMER) + "$"),
+                    
+
+                ]
             },
             fallbacks=[CommandHandler("chatmode", self.start)],
             per_message=False
 
         )
         application.add_handler(conv_handler)
-        # application.add_handler(CommandHandler(
-        #     'chat', self.prompt, filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
-        # )
-        # application.add_handler(MessageHandler(
-        #     filters.PHOTO | filters.Document.IMAGE,
-        #     self.vision))
-        # application.add_handler(MessageHandler(
-        #     filters.AUDIO | filters.VOICE | filters.Document.AUDIO |
-        #     filters.VIDEO | filters.VIDEO_NOTE | filters.Document.VIDEO,
-        #     self.transcribe))
         application.add_handler(MessageHandler((filters.TEXT|filters.VOICE)  & (~filters.COMMAND), self.transcribe))
-        # application.add_handler(MessageHandler(filters.VOICE & (~filters.COMMAND), self.transcribe))
+      
         
 
         application.add_error_handler(error_handler)

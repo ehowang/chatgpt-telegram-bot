@@ -350,7 +350,7 @@ class OpenAIHelper:
         except Exception as e:
             raise Exception(f"⚠️ _{localized_text('error', bot_language)}._ ⚠️\n{str(e)}") from e
 
-    async def generate_speech(self, text: str) -> tuple[any, int]:
+    async def generate_speech(self, text: str,tts_voice: str) -> tuple[any, int]:
         """
         Generates an audio from the given text using TTS model.
         :param prompt: The text to send to the model
@@ -360,7 +360,7 @@ class OpenAIHelper:
         try:
             response = await self.client.audio.speech.create(
                 model=self.config['tts_model'],
-                voice=self.config['tts_voice'],
+                voice=tts_voice,
                 input=text,
                 response_format='opus'
             )
