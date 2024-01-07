@@ -47,7 +47,8 @@ class ChatGPTTelegramBot:
             BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
             BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
             BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
-            BotCommand(command='chatmode', description=localized_text('chatmode_description', bot_language))
+            BotCommand(command='chatmode', description=localized_text('chatmode_description', bot_language)),
+            BotCommand(command='setting', description=localized_text('setting_description', bot_language)),
         ]
         
         self.disallowed_message = localized_text('disallowed', bot_language)
@@ -458,7 +459,7 @@ class ChatGPTTelegramBot:
         """
         Post initialization hook for the bot.
         """
-        await application.bot.set_my_commands(self.group_commands, scope=BotCommandScopeAllGroupChats())
+        
         await application.bot.set_my_commands(self.commands)
 
    
@@ -585,7 +586,44 @@ class ChatGPTTelegramBot:
         reply_markup=InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text="Select mode", reply_markup=reply_markup)
         return VOICE_MODES_ROUTES
-        
+   
+    async def setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+       keyboard=[
+           InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
+           InlineKeyboardButton("❌"+"VOICE",callback_data="2")
+       ],
+       reply_markup=InlineKeyboardMarkup(keyboard)
+       await update.message.reply_text("Please choose mode:",reply_markup=reply_markup)
+
+    async def set_setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query=update.callback_query
+        await query.answer()
+        print(query.data)
+        if query.data=="1":
+            keyboard1=[
+                [InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
+                InlineKeyboardButton("❌"+"VOICE",callback_data="2"),],
+
+                [InlineKeyboardButton("CANCEL",callback_data="3"),]
+            ]
+            reply_markup1=InlineKeyboardMarkup(keyboard1)
+            await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup1)
+        elif query.data=="2":
+            keyboard2=[
+                [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
+                InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
+
+                [InlineKeyboardButton("CANCEL",callback_data="3"),
+                 InlineKeyboardButton("Select Voice",callback_data="4")],
+            ]
+            reply_markup2=InlineKeyboardMarkup(keyboard2)
+            await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup2)
+        elif query.data=="3":
+            await query.delete_message()
+        elif query.data=="4":
+            pass
+       
+
     def run(self):
         """
         Runs the bot indefinitely until the user presses Ctrl+C
@@ -605,8 +643,8 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
-        # application.add_handler(CommandHandler("chatmode", self.chatmode))
-        # application.add_handler(CallbackQueryHandler(self.mode_menu))
+        application.add_handler(CommandHandler("setting", self.setting_handle,filters=filters.COMMAND))
+        application.add_handler(CallbackQueryHandler(self.set_setting_handle))
         conv_handler=ConversationHandler(
             entry_points=[CommandHandler("chatmode", self.start)],
             states={
