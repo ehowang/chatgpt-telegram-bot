@@ -57,7 +57,9 @@ class ChatGPTTelegramBot:
         self.last_message = {}
         self.inline_queries_cache = {}
         self.voice_enable=False
-        self.tts_voice=self.config['tts_voice']
+        self.tts_voices=list(self.config['tts_voice'])
+        self.tts_voice=self.tts_voices[0]
+        
 
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -596,9 +598,10 @@ class ChatGPTTelegramBot:
        await update.message.reply_text("Please choose mode:",reply_markup=reply_markup)
 
     async def set_setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        
         query=update.callback_query
+       
         await query.answer()
-        print(query.data)
         if query.data=="1":
             keyboard1=[
                 [InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
@@ -620,9 +623,38 @@ class ChatGPTTelegramBot:
             await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup2)
         elif query.data=="3":
             await query.delete_message()
-        elif query.data=="4":
-            pass
-       
+        else:
+            keyboard3=[]
+            row=[]
+            if int(query.data)>4:
+                await query.message.delete()
+                self.tts_voice=self.config["tts_voice"][int(query.data)-5]
+            for index in range(len(self.tts_voices)):
+               
+                if(self.tts_voice==self.config["tts_voice"][index]):
+                    row.append(InlineKeyboardButton("✅"+self.config["tts_voice"][index],callback_data=index+5))
+                else:
+                    row.append(InlineKeyboardButton("❌"+self.config["tts_voice"][index],callback_data=index+5))
+                if len(row)==2:
+                    keyboard3.append(row)
+                    row=[]
+            if row:
+                keyboard3.append(row)
+            reply_markup3=InlineKeyboardMarkup(keyboard3)
+            await query.edit_message_text(text="Please pick a voice you favor:",reply_markup=reply_markup3)
+            speech_file, text_length = await self.openai.generate_speech(text="hello",tts_voice=self.tts_voice)
+            await query.message.reply_voice(voice=speech_file)
+            
+    async def show_voices_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query=update.callback_query
+        await query.answer()
+        print(query.data)
+        if int(query.data)>4:
+            await query.delete_message()
+        if int(query.data)>=4:
+            await query.edit_message_media(media="0001.wav")
+            
+        
 
     def run(self):
         """
@@ -645,37 +677,27 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('resend', self.resend))
         application.add_handler(CommandHandler("setting", self.setting_handle,filters=filters.COMMAND))
         application.add_handler(CallbackQueryHandler(self.set_setting_handle))
-        conv_handler=ConversationHandler(
-            entry_points=[CommandHandler("chatmode", self.start)],
-            states={
-                VOICE_OFF_ROUTES:[
-                    CallbackQueryHandler(self.text,pattern="^" + str(TEXT) + "$"),
-                    CallbackQueryHandler(self.voice,pattern="^" + str(VOICE_OFF) + "$"),
-                    CallbackQueryHandler(self.cancel, pattern="^" + str(CANCEL) + "$")
-                ],
-                VOICE_ON_ROUTES:[
-                    CallbackQueryHandler(self.text,pattern="^" + str(TEXT) + "$"),
-                    CallbackQueryHandler(self.voice,pattern="^" + str(VOICE_ON) + "$"),
-                    CallbackQueryHandler(self.cancel, pattern="^" + str(CANCEL) + "$"),
-                    CallbackQueryHandler(self.voice_select, pattern="^" + str(VOICE_SELECT) + "$"),
-                    
-                ],
-                VOICE_SELECT_ROUTES:[
-                    CallbackQueryHandler(self.voice_alloy, pattern="^" + str(VOICE_ALLOY) + "$"),
-                    CallbackQueryHandler(self.voice_echo, pattern="^" + str(VOICE_ECHO) + "$"),
-                    CallbackQueryHandler(self.voice_fable, pattern="^" + str(VOICE_FABLE) + "$"),
-                    CallbackQueryHandler(self.voice_onyx, pattern="^" + str(VOICE_ONYX) + "$"),
-                    CallbackQueryHandler(self.voice_nova, pattern="^" + str(VOICE_NOVA) + "$"),
-                    CallbackQueryHandler(self.voice_shimmer, pattern="^" + str(VOICE_SHIMMER) + "$"),
+        
+        # conv_handler=ConversationHandler(
+        #     entry_points=[CommandHandler("setting", self.setting_handle)],
+        #     states={
+        #         INIT_ROUTES:[CallbackQueryHandler(self.set_setting_handle),],
+        #         VOICE_SELECT_ROUTES:[
+        #             CallbackQueryHandler(self.voice_alloy, pattern="^" + str(VOICE_ALLOY) + "$"),
+        #             CallbackQueryHandler(self.voice_echo, pattern="^" + str(VOICE_ECHO) + "$"),
+        #             CallbackQueryHandler(self.voice_fable, pattern="^" + str(VOICE_FABLE) + "$"),
+        #             CallbackQueryHandler(self.voice_onyx, pattern="^" + str(VOICE_ONYX) + "$"),
+        #             CallbackQueryHandler(self.voice_nova, pattern="^" + str(VOICE_NOVA) + "$"),
+        #             CallbackQueryHandler(self.voice_shimmer, pattern="^" + str(VOICE_SHIMMER) + "$"),
                     
 
-                ]
-            },
-            fallbacks=[CommandHandler("chatmode", self.start)],
-            per_message=False
+        #         ]
+        #     },
+        #     fallbacks=[CommandHandler("setting", self.setting_handle)],
+        #     per_message=False
 
-        )
-        application.add_handler(conv_handler)
+        # )
+        # application.add_handler(conv_handler)
         application.add_handler(MessageHandler((filters.TEXT|filters.VOICE)  & (~filters.COMMAND), self.transcribe))
       
         
