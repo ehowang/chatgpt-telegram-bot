@@ -60,8 +60,8 @@ class ChatGPTTelegramBot:
         self.last_message = {}
         self.inline_queries_cache = {}
         self.voice_enable=False
-        self.tts_voices=list(self.config['tts_voice'])
-        self.tts_voice=self.tts_voices[0]
+        # self.tts_voices=list(self.config['tts_voice'])
+        self.tts_voice=list(ACCENTS.keys())[0]
         
 
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -467,82 +467,87 @@ class ChatGPTTelegramBot:
         
         await application.bot.set_my_commands(self.commands)
    
-   
-    # async def setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #    keyboard=[
-    #        InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
-    #        InlineKeyboardButton("❌"+"VOICE",callback_data="2")
-    #    ],
-    #    reply_markup=InlineKeyboardMarkup(keyboard)
-    #    await update.message.reply_text("Please choose mode:",reply_markup=reply_markup)
-
-    # async def set_setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    def voice_off_keyboard(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅"+"TEXT",callback_data="text_mode")],
+            [InlineKeyboardButton("VOICE OFF",callback_data="voice_off")],
+            [InlineKeyboardButton("🔙"+"CANCEL",callback_data="cancel")]
+        ])
+    def voice_on_keyboard(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("TEXT",callback_data="text_mode")],
+            [InlineKeyboardButton("✅"+"VOICE ON",callback_data="voice_on")],
+            [InlineKeyboardButton("VOICE OPTIONS",callback_data="select_voice")],
+            [InlineKeyboardButton("🔙"+"CANCEL",callback_data="cancel")]
+        ]
+        )
+    def accents_keyboard(self):
+        keyboard=[]
+        row=[]
+        for accent in ACCENTS.keys():      
+            if(self.tts_voice==accent):
+                row.append(InlineKeyboardButton("✅"+accent,callback_data=accent))
+            else:
+                row.append(InlineKeyboardButton(accent,callback_data=accent))
+            if len(row)==2:
+                keyboard.append(row)
+                row=[]
+        if row:
+            keyboard.append(row)
+        keyboard.append([InlineKeyboardButton("BACK", callback_data="back")])  
+        return InlineKeyboardMarkup(keyboard)
+    async def handle_accent_selection(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query  
+        # 用户做出选择后，我们编辑原有的消息，删除上一次的语音  
+        await query.answer()  
+        await query.edit_message_text("SELECT VOICE:",reply_markup=self.accents_keyboard())
+        accent_chosen = query.data
+        file_id = ACCENTS[accent_chosen]
+        # 尝试删除之前的语音消息，如果存在  
+        if 'voice_message_id' in context.user_data:  
+            await context.bot.delete_message(chat_id=query.message.chat_id,  
+            message_id=context.user_data['voice_message_id'])  
         
-    #     query=update.callback_query
-       
-    #     await query.answer()
-    #     if query.data=="1":
-    #         if self.voice_enable==False:
-    #             keyboard1=[
-    #                 [InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
-    #                 InlineKeyboardButton("❌"+"VOICE",callback_data="2"),],
+        # 发送新的语音消息  
+        new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
+        
+        # 保存这个语音消息的ID，以便后面可能删除  
+        context.user_data['voice_message_id'] = new_voice_message.message_id
 
-    #                 [InlineKeyboardButton("CANCEL",callback_data="3"),]
-    #             ]
-    #         else:
-    #             keyboard1=[
-    #                 [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
-    #                 InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
-
-    #                 [InlineKeyboardButton("CANCEL",callback_data="3"),
-    #                 InlineKeyboardButton("Select Voice",callback_data="4")],
-                    
-    #             ]
-    #         reply_markup1=InlineKeyboardMarkup(keyboard1)
-    #         await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup1)
-    #     elif query.data=="2":
-    #         keyboard2=[
-    #             [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
-    #             InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
-
-    #             [InlineKeyboardButton("CANCEL",callback_data="3"),
-    #              InlineKeyboardButton("Select Voice",callback_data="4")],
-    #         ]
-    #         reply_markup2=InlineKeyboardMarkup(keyboard2)
-    #         await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup2)
-    #     elif query.data=="3":
-    #         await query.delete_message()
-    #     else:
-    #         keyboard3=[]
-    #         row=[]
-    #         self.voice_enable=True
-    #         print(self.config['tts_voice'])
-    #         if int(query.data)>4:
-    #             self.tts_voice=self.config["tts_voice"][int(query.data)-5]
-    #         for index in range(len(self.tts_voices)):
-               
-    #             if(self.tts_voice==self.config["tts_voice"][index]):
-    #                 row.append(InlineKeyboardButton("✅"+self.config["tts_voice"][index],callback_data=index+5))
-    #             else:
-    #                 row.append(InlineKeyboardButton("❌"+self.config["tts_voice"][index],callback_data=index+5))
-    #             if len(row)==2:
-    #                 keyboard3.append(row)
-    #                 row=[]
-    #         if row:
-    #             keyboard3.append(row)
-    #         reply_markup3=InlineKeyboardMarkup(keyboard3)
-    #         await query.edit_message_text(text="Please pick a voice you favor:",reply_markup=reply_markup3)
-    #         speech_file = await self.openai.generate_speech(text="hello",tts_voice=self.tts_voice)
-    #         await query.message.reply_voice(voice=speech_file)
-            
+        
+   
         # 命令处理函数用于展示选择口音的内联键盘  
-    async def setting_handle(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
-                keyboard = [  
-                [InlineKeyboardButton(accent, callback_data=accent) for accent in ACCENTS.keys()]  
-                ]  
-                reply_markup = InlineKeyboardMarkup(keyboard)  
-                await update.message.reply_text('Please choose an accent:', reply_markup=reply_markup)  
-  
+    async def reply_mode(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: 
+
+       
+        keyboard=[
+            [InlineKeyboardButton("✅"+"TEXT",callback_data="text_mode")],
+            [InlineKeyboardButton("VOICE OFF",callback_data="voice_off")],
+            [InlineKeyboardButton("🔙"+"CANCEL",callback_data="cancel")]
+        ]
+        reply_markup=InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("PLEASE CHOOSE MODE:",reply_markup=reply_markup)
+    async def reply_button(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
+        query=update.callback_query
+        data=query.data
+        if data=="text_mode":
+            # await query.answer("文本模式已选择",show_alert=True)
+            await query.edit_message_text("TEXT MODE",reply_markup=self.voice_off_keyboard())
+        elif data=="voice_on":
+            await query.edit_message_text("TEXT MODE",reply_markup=self.voice_off_keyboard())
+        elif data=="voice_off":
+            await query.edit_message_text("VOICE ON:",reply_markup=self.voice_on_keyboard())
+        elif data=="select_voice":
+            await query.edit_message_text("SELECT VOICE",reply_markup=self.accents_keyboard())
+        elif data=="cancel":
+            await query.message.delete()
+        elif data in ACCENTS:
+            self.tts_voice=data
+            await self.handle_accent_selection(update,context)
+        elif data=="back":
+            await query.edit_message_text("PLEASE CHOOSE MODE:",reply_markup=self.voice_on_keyboard())
+        await query.answer()
+    
     # 回调查询处理函数用于处理口音的选择和发送语音消息  
     async def set_setting_handle(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
                 query = update.callback_query  
@@ -580,8 +585,8 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
-        application.add_handler(CommandHandler("setting", self.setting_handle,filters=filters.COMMAND))
-        application.add_handler(CallbackQueryHandler(self.set_setting_handle))
+        application.add_handler(CommandHandler("setting", self.reply_mode,filters=filters.COMMAND))
+        application.add_handler(CallbackQueryHandler(self.reply_button))
         application.add_handler(MessageHandler((filters.TEXT|filters.VOICE)  & (~filters.COMMAND), self.transcribe))
       
         
