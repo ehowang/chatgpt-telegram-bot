@@ -22,12 +22,15 @@ from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicato
     cleanup_intermediate_files
 from openai_helper import OpenAIHelper, localized_text
 from usage_tracker import UsageTracker
-
-TEXT,VOICE_OFF,CANCEL=range(3)
-TEXT,VOICE_ON,CANCEL,VOICE_SELECT=range(4)
-VOICE_OFF_ROUTES,VOICE_ON_ROUTES,VOICE_SELECT_ROUTES=range(3)
-VOICE_ALLOY,VOICE_ECHO,VOICE_FABLE,VOICE_ONYX,VOICE_NOVA,VOICE_SHIMMER=range(6)
-hello_prompt="I'm happy to meet you, and that I'm excited to have the chance to get to know you better!"
+ACCENTS = {  
+ 
+"American": "./audio/american.mp3",  
+"Australian": "./audio/australian.mp3",  
+"British": "./audio/british.mp3", 
+"Indian": "./audio/indian.mp3",  
+"Welsh": "./audio/welsh.mp3",  
+"Italian": "./audio/italian.mp3",  
+} 
 class ChatGPTTelegramBot:
     """
     Class representing a ChatGPT Telegram Bot.
@@ -463,196 +466,100 @@ class ChatGPTTelegramBot:
         """
         
         await application.bot.set_my_commands(self.commands)
-
    
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        await query.delete_message()
-        return ConversationHandler.END
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        keyboard=[
-            [
-                InlineKeyboardButton("Text", callback_data=str(TEXT)),
-                InlineKeyboardButton("Voice", callback_data=str(VOICE)),
-                
-            ],
-            [
-                InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
-            ],
-        ]
-
-        reply_markup=InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Select mode", reply_markup=reply_markup)
-        return TEXT_MODES_ROUTES
-
-    async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.config["enable_tts_generation"]=False
-        
-        await query.edit_message_text(text="Select mode:Text")
-        return ConversationHandler.END
-    async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        keyboard=[
-            [
-                InlineKeyboardButton("Text", callback_data=str(TEXT)),
-            ],
-            [
-                InlineKeyboardButton("Voice", callback_data=str(VOICE)),
-            ],
-            [
-                InlineKeyboardButton("Voice Select", callback_data=str(VOICE_SELECT)),
-            ],
-            [
-                InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
-            ]
-        ]
-        reply_markup=InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Select mode", reply_markup=reply_markup)
-        return VOICE_MODES_ROUTES
-    async def voice_select(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        keyboard=[
-            [
-                InlineKeyboardButton("Alloy", callback_data=str(VOICE_ALLOY)),
-                InlineKeyboardButton("Echo", callback_data=str(VOICE_ECHO)),
-            ],
-            [
-                InlineKeyboardButton("Fable",callback_data=str(VOICE_FABLE)),
-                InlineKeyboardButton("Onyx", callback_data=str(VOICE_ONYX)),
-            ],
-            [
-                InlineKeyboardButton("Nova", callback_data=str(VOICE_NOVA)),
-                InlineKeyboardButton("Shimmer", callback_data=str(VOICE_SHIMMER)),
-            ],
-            [
-                InlineKeyboardButton("Back", callback_data=str(BACK)),
-            ]
-        ]
-        reply_markup=InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Which voice do you want?", reply_markup=reply_markup)
-        return VOICE_SELECT_ROUTES
-    async def voice_alloy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Alloy")
-        return ConversationHandler.END
-    async def voice_echo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Echo")
-        return ConversationHandler.END
-    async def voice_fable(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Fable")
-        return ConversationHandler.END
-    async def voice_nova(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Nova")
-        return ConversationHandler.END
-    async def voice_onyx(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Onyx")
-        return ConversationHandler.END
-    async def voice_shimmer(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        self.tts(update, context,response=hello_prompt)
-        await query.edit_message_text(text="Select Voice:Shimmer")
-        return ConversationHandler.END
-    async def back(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        query=update.callback_query
-        await query.answer()
-        keyboard=[
-            [
-                InlineKeyboardButton("Text", callback_data=str(TEXT)),
-            ],
-            [
-                InlineKeyboardButton("Voice", callback_data=str(VOICE)),
-            ],
-            [
-                InlineKeyboardButton("Voice Select", callback_data=str(VOICE_SELECT)),
-            ],
-            [
-                InlineKeyboardButton("Cancel", callback_data=str(CANCEL)),
-            ]
-        ]
-        reply_markup=InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text="Select mode", reply_markup=reply_markup)
-        return VOICE_MODES_ROUTES
    
-    async def setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-       keyboard=[
-           InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
-           InlineKeyboardButton("❌"+"VOICE",callback_data="2")
-       ],
-       reply_markup=InlineKeyboardMarkup(keyboard)
-       await update.message.reply_text("Please choose mode:",reply_markup=reply_markup)
+    # async def setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #    keyboard=[
+    #        InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
+    #        InlineKeyboardButton("❌"+"VOICE",callback_data="2")
+    #    ],
+    #    reply_markup=InlineKeyboardMarkup(keyboard)
+    #    await update.message.reply_text("Please choose mode:",reply_markup=reply_markup)
 
-    async def set_setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # async def set_setting_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
-        query=update.callback_query
+    #     query=update.callback_query
        
-        await query.answer()
-        if query.data=="1":
-            keyboard1=[
-                [InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
-                InlineKeyboardButton("❌"+"VOICE",callback_data="2"),],
+    #     await query.answer()
+    #     if query.data=="1":
+    #         if self.voice_enable==False:
+    #             keyboard1=[
+    #                 [InlineKeyboardButton("✅"+"TEXT",callback_data="1"),
+    #                 InlineKeyboardButton("❌"+"VOICE",callback_data="2"),],
 
-                [InlineKeyboardButton("CANCEL",callback_data="3"),]
-            ]
-            reply_markup1=InlineKeyboardMarkup(keyboard1)
-            await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup1)
-        elif query.data=="2":
-            keyboard2=[
-                [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
-                InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
+    #                 [InlineKeyboardButton("CANCEL",callback_data="3"),]
+    #             ]
+    #         else:
+    #             keyboard1=[
+    #                 [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
+    #                 InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
 
-                [InlineKeyboardButton("CANCEL",callback_data="3"),
-                 InlineKeyboardButton("Select Voice",callback_data="4")],
-            ]
-            reply_markup2=InlineKeyboardMarkup(keyboard2)
-            await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup2)
-        elif query.data=="3":
-            await query.delete_message()
-        else:
-            keyboard3=[]
-            row=[]
-            if int(query.data)>4:
-                await query.message.delete()
-                self.tts_voice=self.config["tts_voice"][int(query.data)-5]
-            for index in range(len(self.tts_voices)):
+    #                 [InlineKeyboardButton("CANCEL",callback_data="3"),
+    #                 InlineKeyboardButton("Select Voice",callback_data="4")],
+                    
+    #             ]
+    #         reply_markup1=InlineKeyboardMarkup(keyboard1)
+    #         await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup1)
+    #     elif query.data=="2":
+    #         keyboard2=[
+    #             [InlineKeyboardButton("❌"+"TEXT",callback_data="1"),
+    #             InlineKeyboardButton("✅"+"VOICE",callback_data="2")],
+
+    #             [InlineKeyboardButton("CANCEL",callback_data="3"),
+    #              InlineKeyboardButton("Select Voice",callback_data="4")],
+    #         ]
+    #         reply_markup2=InlineKeyboardMarkup(keyboard2)
+    #         await query.edit_message_text(text="Please choose mode:",reply_markup=reply_markup2)
+    #     elif query.data=="3":
+    #         await query.delete_message()
+    #     else:
+    #         keyboard3=[]
+    #         row=[]
+    #         self.voice_enable=True
+    #         print(self.config['tts_voice'])
+    #         if int(query.data)>4:
+    #             self.tts_voice=self.config["tts_voice"][int(query.data)-5]
+    #         for index in range(len(self.tts_voices)):
                
-                if(self.tts_voice==self.config["tts_voice"][index]):
-                    row.append(InlineKeyboardButton("✅"+self.config["tts_voice"][index],callback_data=index+5))
-                else:
-                    row.append(InlineKeyboardButton("❌"+self.config["tts_voice"][index],callback_data=index+5))
-                if len(row)==2:
-                    keyboard3.append(row)
-                    row=[]
-            if row:
-                keyboard3.append(row)
-            reply_markup3=InlineKeyboardMarkup(keyboard3)
-            await query.edit_message_text(text="Please pick a voice you favor:",reply_markup=reply_markup3)
-            speech_file, text_length = await self.openai.generate_speech(text="hello",tts_voice=self.tts_voice)
-            await query.message.reply_voice(voice=speech_file)
+    #             if(self.tts_voice==self.config["tts_voice"][index]):
+    #                 row.append(InlineKeyboardButton("✅"+self.config["tts_voice"][index],callback_data=index+5))
+    #             else:
+    #                 row.append(InlineKeyboardButton("❌"+self.config["tts_voice"][index],callback_data=index+5))
+    #             if len(row)==2:
+    #                 keyboard3.append(row)
+    #                 row=[]
+    #         if row:
+    #             keyboard3.append(row)
+    #         reply_markup3=InlineKeyboardMarkup(keyboard3)
+    #         await query.edit_message_text(text="Please pick a voice you favor:",reply_markup=reply_markup3)
+    #         speech_file = await self.openai.generate_speech(text="hello",tts_voice=self.tts_voice)
+    #         await query.message.reply_voice(voice=speech_file)
             
-    async def show_voices_handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query=update.callback_query
-        await query.answer()
-        print(query.data)
-        if int(query.data)>4:
-            await query.delete_message()
-        if int(query.data)>=4:
-            await query.edit_message_media(media="0001.wav")
+        # 命令处理函数用于展示选择口音的内联键盘  
+    async def setting_handle(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
+                keyboard = [  
+                [InlineKeyboardButton(accent, callback_data=accent) for accent in ACCENTS.keys()]  
+                ]  
+                reply_markup = InlineKeyboardMarkup(keyboard)  
+                await update.message.reply_text('Please choose an accent:', reply_markup=reply_markup)  
+  
+    # 回调查询处理函数用于处理口音的选择和发送语音消息  
+    async def set_setting_handle(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
+                query = update.callback_query  
+                # 用户做出选择后，我们编辑原有的消息，删除上一次的语音  
+                await query.answer()  
+                accent_chosen = query.data
+                file_id = ACCENTS[accent_chosen]
+                # 尝试删除之前的语音消息，如果存在  
+                if 'voice_message_id' in context.user_data:  
+                    await context.bot.delete_message(chat_id=query.message.chat_id,  
+                    message_id=context.user_data['voice_message_id'])  
+                
+                # 发送新的语音消息  
+                new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
+                
+                # 保存这个语音消息的ID，以便后面可能删除  
+                context.user_data['voice_message_id'] = new_voice_message.message_id  
             
         
 
@@ -670,34 +577,11 @@ class ChatGPTTelegramBot:
 
         application.add_handler(CommandHandler('reset', self.reset))
         application.add_handler(CommandHandler('help', self.help))
-        # application.add_handler(CommandHandler('image', self.image))
-        # application.add_handler(CommandHandler('tts', self.tts))
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
         application.add_handler(CommandHandler("setting", self.setting_handle,filters=filters.COMMAND))
         application.add_handler(CallbackQueryHandler(self.set_setting_handle))
-        
-        # conv_handler=ConversationHandler(
-        #     entry_points=[CommandHandler("setting", self.setting_handle)],
-        #     states={
-        #         INIT_ROUTES:[CallbackQueryHandler(self.set_setting_handle),],
-        #         VOICE_SELECT_ROUTES:[
-        #             CallbackQueryHandler(self.voice_alloy, pattern="^" + str(VOICE_ALLOY) + "$"),
-        #             CallbackQueryHandler(self.voice_echo, pattern="^" + str(VOICE_ECHO) + "$"),
-        #             CallbackQueryHandler(self.voice_fable, pattern="^" + str(VOICE_FABLE) + "$"),
-        #             CallbackQueryHandler(self.voice_onyx, pattern="^" + str(VOICE_ONYX) + "$"),
-        #             CallbackQueryHandler(self.voice_nova, pattern="^" + str(VOICE_NOVA) + "$"),
-        #             CallbackQueryHandler(self.voice_shimmer, pattern="^" + str(VOICE_SHIMMER) + "$"),
-                    
-
-        #         ]
-        #     },
-        #     fallbacks=[CommandHandler("setting", self.setting_handle)],
-        #     per_message=False
-
-        # )
-        # application.add_handler(conv_handler)
         application.add_handler(MessageHandler((filters.TEXT|filters.VOICE)  & (~filters.COMMAND), self.transcribe))
       
         
