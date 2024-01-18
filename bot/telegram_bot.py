@@ -547,24 +547,6 @@ class ChatGPTTelegramBot:
         elif data=="back":
             await query.edit_message_text("PLEASE CHOOSE MODE:",reply_markup=self.voice_on_keyboard())
         await query.answer()
-    
-    # 回调查询处理函数用于处理口音的选择和发送语音消息  
-    async def set_setting_handle(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
-                query = update.callback_query  
-                # 用户做出选择后，我们编辑原有的消息，删除上一次的语音  
-                await query.answer()  
-                accent_chosen = query.data
-                file_id = ACCENTS[accent_chosen]
-                # 尝试删除之前的语音消息，如果存在  
-                if 'voice_message_id' in context.user_data:  
-                    await context.bot.delete_message(chat_id=query.message.chat_id,  
-                    message_id=context.user_data['voice_message_id'])  
-                
-                # 发送新的语音消息  
-                new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
-                
-                # 保存这个语音消息的ID，以便后面可能删除  
-                context.user_data['voice_message_id'] = new_voice_message.message_id  
             
         
 
