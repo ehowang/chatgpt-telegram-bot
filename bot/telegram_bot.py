@@ -12,6 +12,7 @@ from telegram import InputTextMessageContent, BotCommand
 from telegram.error import RetryAfter, TimedOut, BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
     filters, InlineQueryHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext,ConversationHandler
+from telegram import error
 
 from pydub import AudioSegment
 from PIL import Image
@@ -473,7 +474,14 @@ class ChatGPTTelegramBot:
             [InlineKeyboardButton("VOICE OFF",callback_data="voice_off")],
             [InlineKeyboardButton("🔙"+"CANCEL",callback_data="cancel")]
         ])
-    def voice_on_keyboard(self):
+    def voice_on_keyboard(self) -> InlineKeyboardMarkup:
+        #当用户选择在单个窗口打开多个音色选择的内联键盘时，需要删除上个内联键盘留下的语音信息 
+                  
+       
+        # 用户选择音色后，进行clear_history操作，重新选择音色前清空context.user_data中的数据
+        
+            
+
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("TEXT",callback_data="text_mode")],
             [InlineKeyboardButton("✅"+"VOICE ON",callback_data="voice_on")],
@@ -499,53 +507,68 @@ class ChatGPTTelegramBot:
     async def handle_accent_selection(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query  
         # 用户做出选择后，我们编辑原有的消息，删除上一次的语音  
-        await query.answer()  
-        await query.edit_message_text("SELECT VOICE:",reply_markup=self.accents_keyboard())
-        accent_chosen = query.data
-        file_id = ACCENTS[accent_chosen]
-        # 尝试删除之前的语音消息，如果存在  
-        if 'voice_message_id' in context.user_data:  
-            await context.bot.delete_message(chat_id=query.message.chat_id,  
-            message_id=context.user_data['voice_message_id'])  
-        
-        # 发送新的语音消息  
-        new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
-        
-        # 保存这个语音消息的ID，以便后面可能删除  
-        context.user_data['voice_message_id'] = new_voice_message.message_id
+        await query.answer() 
 
+        if 'voice_message_id' in context.user_data: 
+            try:      
+                await context.bot.delete_message(chat_id=query.message.chat_id,  
+            message_id=context.user_data['voice_message_id'])
+                context.user_data.clear()
+            
+            except error.TelegramError as e:
+                    # 处理可能发生的错误，例如消息已经被删除，或者bot没有权限删除消息等
+                logging.error(f"Error occurred: {e.message}")
+                context.user_data.clear()
         
-   
+        accent_chosen = query.data
+        #点开音色选择，发送用户默认的语音
+        if(accent_chosen=="select_voice"):
+            file_id = ACCENTS[self.tts_voice]
+             # 发送新的语音消息  
+            new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
+            
+            # 保存这个语音消息的ID，以便后面可能删除  
+            context.user_data['voice_message_id'] = new_voice_message.message_id
+        else:
+            if accent_chosen!="back":
+                await query.edit_message_text("SELECT VOICE:",reply_markup=self.accents_keyboard())  
+                file_id = ACCENTS[accent_chosen]
+                # 发送新的语音消息  
+                new_voice_message = await context.bot.send_voice(chat_id=query.message.chat_id, voice=file_id)  
+                
+                # 保存这个语音消息的ID，以便后面可能删除  
+                context.user_data['voice_message_id'] = new_voice_message.message_id
         # 命令处理函数用于展示选择口音的内联键盘  
     async def reply_mode(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: 
-
-       
         keyboard=[
             [InlineKeyboardButton("✅"+"TEXT",callback_data="text_mode")],
             [InlineKeyboardButton("VOICE OFF",callback_data="voice_off")],
             [InlineKeyboardButton("🔙"+"CANCEL",callback_data="cancel")]
         ]
         reply_markup=InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("PLEASE CHOOSE MODE:",reply_markup=reply_markup)
+        await update.message.reply_text("TEXT ON:",reply_markup=reply_markup)
     async def reply_button(self,update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  
         query=update.callback_query
         data=query.data
         if data=="text_mode":
             # await query.answer("文本模式已选择",show_alert=True)
-            await query.edit_message_text("TEXT MODE",reply_markup=self.voice_off_keyboard())
+            await query.edit_message_text("TEXT ON",reply_markup=self.voice_off_keyboard())
         elif data=="voice_on":
-            await query.edit_message_text("TEXT MODE",reply_markup=self.voice_off_keyboard())
+            await query.edit_message_text("TEXT ON",reply_markup=self.voice_off_keyboard())
         elif data=="voice_off":
-            await query.edit_message_text("VOICE ON:",reply_markup=self.voice_on_keyboard())
+            await query.edit_message_text("VOICE ON:",reply_markup= self.voice_on_keyboard())
         elif data=="select_voice":
-            await query.edit_message_text("SELECT VOICE",reply_markup=self.accents_keyboard())
+            await query.edit_message_text("SELECT VOICE:",reply_markup=self.accents_keyboard())
+            await self.handle_accent_selection(update,context)
         elif data=="cancel":
             await query.message.delete()
         elif data in ACCENTS:
             self.tts_voice=data
             await self.handle_accent_selection(update,context)
         elif data=="back":
-            await query.edit_message_text("PLEASE CHOOSE MODE:",reply_markup=self.voice_on_keyboard())
+            await self.handle_accent_selection(update,context)
+            await query.edit_message_text("VOICE ON:",reply_markup= self.voice_on_keyboard())
+           
         await query.answer()
             
         
